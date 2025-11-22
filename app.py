@@ -1,3 +1,4 @@
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
@@ -5,18 +6,26 @@ import mysql.connector
 app = Flask(__name__)
 CORS(app)
 
-# ===== DB CONNECTION =====
+# ===== DATABASE CONNECTION (Render + Railway Compatible) =====
 try:
+    DB_HOST = os.environ.get("MYSQL_HOST", "localhost")
+    DB_USER = os.environ.get("MYSQL_USER", "root")
+    DB_PASS = os.environ.get("MYSQL_PASSWORD", "")
+    DB_NAME = os.environ.get("MYSQL_DB", "focusflow")
+    DB_PORT = int(os.environ.get("MYSQL_PORT", 3306))
+
     db = mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="Isaac@174",  # change if needed
-        database="focusflow"
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASS,
+        database=DB_NAME,
+        port=DB_PORT
     )
     cursor = db.cursor()
     print("✅ MySQL Connected Successfully")
 except mysql.connector.Error as err:
     print("❌ Database connection failed:", err)
+
 
 # ===== ENSURE TABLES =====
 cursor.execute("""
@@ -45,7 +54,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 """)
 db.commit()
 
-# ===== AUTH =====
+
+# ===== SIGNUP =====
 @app.post("/api/signup")
 def signup():
     try:
@@ -53,6 +63,7 @@ def signup():
         username = data.get("username")
         email = data.get("email")
         password = data.get("password")
+
         if not username or not email or not password:
             return jsonify({"success": False, "message": "All fields are required"})
 
@@ -65,36 +76,51 @@ def signup():
             (username, email, password)
         )
         db.commit()
+
         return jsonify({"success": True, "message": "Signup successful"})
+
     except Exception as e:
         print("❌ Signup error:", e)
         return jsonify({"success": False, "message": "Database error"})
 
+
+# ===== LOGIN =====
 @app.post("/api/login")
 def login():
     try:
         data = request.get_json()
         email = data.get("email")
         password = data.get("password")
+
         if not email or not password:
             return jsonify({"success": False, "message": "Email and password required."})
 
         with db.cursor() as cur:
             cur.execute("SELECT id, username, password FROM users WHERE email=%s", (email,))
             row = cur.fetchone()
+
         if not row:
             return jsonify({"success": False, "message": "User not found."})
 
         user_id, username, stored_password = row
+
         if stored_password != password:
             return jsonify({"success": False, "message": "Invalid password."})
 
-        return jsonify({"success": True, "message": "Login successful",
-                        "user_id": user_id, "username": username, "email": email})
+        return jsonify({
+            "success": True,
+            "message": "Login successful",
+            "user_id": user_id,
+            "username": username,
+            "email": email
+        })
+
     except Exception as e:
         print("❌ Login error:", e)
-        return jsonify({"success": False, "message": "Internal server error."})
+        return jsonify({"success": False, "message": "Internal server error"})
 
+
+# ===== USER PROFILE =====
 @app.post("/api/profile")
 def profile():
     try:
@@ -104,7 +130,6 @@ def profile():
         if not user_id:
             return jsonify({"success": False, "message": "Missing user_id"})
 
-        # ✅ Ensure it's an integer
         user_id = int(user_id)
 
         cursor.execute(
@@ -123,7 +148,7 @@ def profile():
             "user": {
                 "id": user_id,
                 "username": username,
-                "email": email,
+                "email": email
             }
         })
 
@@ -132,18 +157,19 @@ def profile():
         return jsonify({"success": False, "message": "Database error"})
 
 
-# ===== TASKS (date-aware) =====
+# ===== ADD TASK =====
 @app.post("/api/add_task")
 def add_task():
     try:
         data = request.get_json()
         user_id = data.get("user_id")
-        date = data.get("date")          # "YYYY-MM-DD"
+        date = data.get("date")
         time = data.get("time")
         task = data.get("task")
         icon = data.get("icon")
         color = data.get("color")
         duration = data.get("duration")
+
         if not user_id or not date or not task:
             return jsonify({"success": False, "message": "Missing required fields"})
 
@@ -151,17 +177,22 @@ def add_task():
             INSERT INTO tasks (user_id, date, time, task, icon, color, duration)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (user_id, date, time, task, icon, color, duration))
+
         db.commit()
         return jsonify({"success": True, "message": "Task added"})
+
     except Exception as e:
         print("❌ Add Task error:", e)
         return jsonify({"success": False, "message": "Database error"})
 
+
+# ===== GET TASKS =====
 @app.get("/api/get_tasks")
 def get_tasks():
     try:
         user_id = request.args.get("user_id")
-        date = request.args.get("date")  # "YYYY-MM-DD"
+        date = request.args.get("date")
+
         if not user_id or not date:
             return jsonify({"success": False, "message": "Missing user_id or date"})
 
@@ -171,7 +202,9 @@ def get_tasks():
             WHERE user_id=%s AND date=%s
             ORDER BY time ASC
         """, (user_id, date))
+
         rows = cursor.fetchall()
+
         tasks = [{
             "id": r[0],
             "date": r[1].strftime("%Y-%m-%d"),
@@ -181,46 +214,63 @@ def get_tasks():
             "color": r[5],
             "duration": r[6]
         } for r in rows]
+
         return jsonify({"success": True, "tasks": tasks})
+
     except Exception as e:
         print("❌ Get Tasks error:", e)
         return jsonify({"success": False, "message": "Database error"})
 
+
+# ===== UPDATE TASK =====
 @app.put("/api/update_task/<int:task_id>")
 def update_task(task_id):
     try:
         data = request.get_json()
-        date = data.get("date")          # allow changing date too
-        time = data.get("time")
-        task = data.get("task")
-        icon = data.get("icon")
-        color = data.get("color")
-        duration = data.get("duration")
 
         cursor.execute("""
             UPDATE tasks
             SET date=%s, time=%s, task=%s, icon=%s, color=%s, duration=%s
             WHERE id=%s
-        """, (date, time, task, icon, color, duration, task_id))
+        """, (
+            data.get("date"),
+            data.get("time"),
+            data.get("task"),
+            data.get("icon"),
+            data.get("color"),
+            data.get("duration"),
+            task_id
+        ))
+
         db.commit()
+
         return jsonify({"success": True})
+
     except Exception as e:
         print("❌ Update Task error:", e)
         return jsonify({"success": False, "message": "Database error"})
 
+
+# ===== DELETE TASK =====
 @app.delete("/api/delete_task/<int:task_id>")
 def delete_task(task_id):
     try:
         cursor.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
         db.commit()
+
         return jsonify({"success": True})
+
     except Exception as e:
         print("❌ Delete Task error:", e)
         return jsonify({"success": False, "message": "Database error"})
 
+
+# ===== ROOT =====
 @app.get("/")
 def root():
     return jsonify({"ok": True, "msg": "FocusFlow backend running"})
 
+
+# ===== LOCAL DEV ONLY (Render uses gunicorn) =====
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
