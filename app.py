@@ -4,9 +4,29 @@ from flask_cors import CORS
 import mysql.connector
 
 app = Flask(__name__)
-CORS(app)
 
-# ===== DATABASE CONNECTION (Render + Railway Compatible) =====
+# ===================== CORS FIX (Vercel + Render Compatible) =====================
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "https://focus-flow-jet.vercel.app",
+            "http://localhost:5173",
+            "http://localhost:3000",
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
+
+@app.before_request
+def handle_options():
+    """Handle preflight OPTIONS requests for CORS."""
+    if request.method == "OPTIONS":
+        return jsonify({"ok": True}), 200
+
+
+# ===================== DATABASE CONNECTION =====================
 try:
     DB_HOST = os.environ.get("MYSQL_HOST", "localhost")
     DB_USER = os.environ.get("MYSQL_USER", "root")
@@ -21,13 +41,15 @@ try:
         database=DB_NAME,
         port=DB_PORT
     )
+
     cursor = db.cursor()
     print("✅ MySQL Connected Successfully")
+
 except mysql.connector.Error as err:
-    print("❌ Database connection failed:", err)
+    print("❌ Database Connection Failed:", err)
 
 
-# ===== ENSURE TABLES =====
+# ===================== TABLES =====================
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -55,7 +77,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 db.commit()
 
 
-# ===== SIGNUP =====
+# ===================== SIGNUP =====================
 @app.post("/api/signup")
 def signup():
     try:
@@ -67,7 +89,7 @@ def signup():
         if not username or not email or not password:
             return jsonify({"success": False, "message": "All fields are required"})
 
-        cursor.execute("SELECT id FROM users WHERE email=%s", (email,))
+        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
         if cursor.fetchone():
             return jsonify({"success": False, "message": "User already exists"})
 
@@ -80,11 +102,11 @@ def signup():
         return jsonify({"success": True, "message": "Signup successful"})
 
     except Exception as e:
-        print("❌ Signup error:", e)
-        return jsonify({"success": False, "message": "Database error"})
+        print("❌ Signup Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== LOGIN =====
+# ===================== LOGIN =====================
 @app.post("/api/login")
 def login():
     try:
@@ -95,17 +117,16 @@ def login():
         if not email or not password:
             return jsonify({"success": False, "message": "Email and password required."})
 
-        with db.cursor() as cur:
-            cur.execute("SELECT id, username, password FROM users WHERE email=%s", (email,))
-            row = cur.fetchone()
+        cursor.execute("SELECT id, username, password FROM users WHERE email=%s", (email,))
+        row = cursor.fetchone()
 
         if not row:
-            return jsonify({"success": False, "message": "User not found."})
+            return jsonify({"success": False, "message": "User not found"})
 
         user_id, username, stored_password = row
 
         if stored_password != password:
-            return jsonify({"success": False, "message": "Invalid password."})
+            return jsonify({"success": False, "message": "Incorrect password"})
 
         return jsonify({
             "success": True,
@@ -116,26 +137,20 @@ def login():
         })
 
     except Exception as e:
-        print("❌ Login error:", e)
-        return jsonify({"success": False, "message": "Internal server error"})
+        print("❌ Login Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== USER PROFILE =====
+# ===================== USER PROFILE =====================
 @app.post("/api/profile")
 def profile():
     try:
-        data = request.get_json()
-        user_id = data.get("user_id")
+        user_id = request.get_json().get("user_id")
 
         if not user_id:
             return jsonify({"success": False, "message": "Missing user_id"})
 
-        user_id = int(user_id)
-
-        cursor.execute(
-            "SELECT id, username, email FROM users WHERE id=%s",
-            (user_id,)
-        )
+        cursor.execute("SELECT id, username, email FROM users WHERE id=%s", (user_id,))
         row = cursor.fetchone()
 
         if not row:
@@ -153,40 +168,37 @@ def profile():
         })
 
     except Exception as e:
-        print("❌ Profile error:", e)
-        return jsonify({"success": False, "message": "Database error"})
+        print("❌ Profile Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== ADD TASK =====
+# ===================== ADD TASK =====================
 @app.post("/api/add_task")
 def add_task():
     try:
         data = request.get_json()
-        user_id = data.get("user_id")
-        date = data.get("date")
-        time = data.get("time")
-        task = data.get("task")
-        icon = data.get("icon")
-        color = data.get("color")
-        duration = data.get("duration")
+        required = ["user_id", "date", "time", "task", "icon", "color", "duration"]
 
-        if not user_id or not date or not task:
+        if any(field not in data for field in required):
             return jsonify({"success": False, "message": "Missing required fields"})
 
         cursor.execute("""
             INSERT INTO tasks (user_id, date, time, task, icon, color, duration)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (user_id, date, time, task, icon, color, duration))
-
+        """, (
+            data["user_id"], data["date"], data["time"],
+            data["task"], data["icon"], data["color"], data["duration"]
+        ))
         db.commit()
+
         return jsonify({"success": True, "message": "Task added"})
 
     except Exception as e:
-        print("❌ Add Task error:", e)
-        return jsonify({"success": False, "message": "Database error"})
+        print("❌ Add Task Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== GET TASKS =====
+# ===================== GET TASKS =====================
 @app.get("/api/get_tasks")
 def get_tasks():
     try:
@@ -218,11 +230,11 @@ def get_tasks():
         return jsonify({"success": True, "tasks": tasks})
 
     except Exception as e:
-        print("❌ Get Tasks error:", e)
-        return jsonify({"success": False, "message": "Database error"})
+        print("❌ Get Tasks Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== UPDATE TASK =====
+# ===================== UPDATE TASK =====================
 @app.put("/api/update_task/<int:task_id>")
 def update_task(task_id):
     try:
@@ -233,44 +245,37 @@ def update_task(task_id):
             SET date=%s, time=%s, task=%s, icon=%s, color=%s, duration=%s
             WHERE id=%s
         """, (
-            data.get("date"),
-            data.get("time"),
-            data.get("task"),
-            data.get("icon"),
-            data.get("color"),
-            data.get("duration"),
-            task_id
+            data.get("date"), data.get("time"), data.get("task"),
+            data.get("icon"), data.get("color"), data.get("duration"), task_id
         ))
 
         db.commit()
-
         return jsonify({"success": True})
 
     except Exception as e:
-        print("❌ Update Task error:", e)
-        return jsonify({"success": False, "message": "Database error"})
+        print("❌ Update Task Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== DELETE TASK =====
+# ===================== DELETE TASK =====================
 @app.delete("/api/delete_task/<int:task_id>")
 def delete_task(task_id):
     try:
         cursor.execute("DELETE FROM tasks WHERE id=%s", (task_id,))
         db.commit()
-
         return jsonify({"success": True})
 
     except Exception as e:
-        print("❌ Delete Task error:", e)
-        return jsonify({"success": False, "message": "Database error"})
+        print("❌ Delete Task Error:", e)
+        return jsonify({"success": False, "message": "Server error"})
 
 
-# ===== ROOT =====
+# ===================== ROOT =====================
 @app.get("/")
 def root():
-    return jsonify({"ok": True, "msg": "FocusFlow backend running"})
+    return jsonify({"ok": True, "message": "FocusFlow backend is running"})
 
 
-# ===== LOCAL DEV ONLY (Render uses gunicorn) =====
+# ===================== LOCAL DEV ONLY =====================
 if __name__ == "__main__":
     app.run()
