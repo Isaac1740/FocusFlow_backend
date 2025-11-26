@@ -5,13 +5,17 @@ import mysql.connector
 
 app = Flask(__name__)
 
-# ===================== CORS FIX (Vercel + Render Compatible) =====================
+# ===================== CORS FIX (WORKS FOR VERCEL + DEV + ANDROID) =====================
+
 CORS(app, resources={
     r"/*": {
         "origins": [
+            "*",  # allow everything (best for dev + APK)
             "https://focus-flow-jet.vercel.app",
             "http://localhost:5173",
             "http://localhost:3000",
+            "http://localhost:8080",
+            "capacitor://localhost"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
@@ -21,12 +25,13 @@ CORS(app, resources={
 
 @app.before_request
 def handle_options():
-    """Handle preflight OPTIONS requests for CORS."""
+    """Handle OPTIONS preflight requests."""
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
 
 
 # ===================== DATABASE CONNECTION =====================
+
 try:
     DB_HOST = os.environ.get("MYSQL_HOST", "localhost")
     DB_USER = os.environ.get("MYSQL_USER", "root")
@@ -50,6 +55,7 @@ except mysql.connector.Error as err:
 
 
 # ===================== TABLES =====================
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -78,6 +84,7 @@ db.commit()
 
 
 # ===================== SIGNUP =====================
+
 @app.post("/api/signup")
 def signup():
     try:
@@ -107,6 +114,7 @@ def signup():
 
 
 # ===================== LOGIN =====================
+
 @app.post("/api/login")
 def login():
     try:
@@ -142,6 +150,7 @@ def login():
 
 
 # ===================== USER PROFILE =====================
+
 @app.post("/api/profile")
 def profile():
     try:
@@ -173,6 +182,7 @@ def profile():
 
 
 # ===================== ADD TASK =====================
+
 @app.post("/api/add_task")
 def add_task():
     try:
@@ -199,6 +209,7 @@ def add_task():
 
 
 # ===================== GET TASKS =====================
+
 @app.get("/api/get_tasks")
 def get_tasks():
     try:
@@ -235,6 +246,7 @@ def get_tasks():
 
 
 # ===================== UPDATE TASK =====================
+
 @app.put("/api/update_task/<int:task_id>")
 def update_task(task_id):
     try:
@@ -258,6 +270,7 @@ def update_task(task_id):
 
 
 # ===================== DELETE TASK =====================
+
 @app.delete("/api/delete_task/<int:task_id>")
 def delete_task(task_id):
     try:
@@ -271,11 +284,13 @@ def delete_task(task_id):
 
 
 # ===================== ROOT =====================
+
 @app.get("/")
 def root():
     return jsonify({"ok": True, "message": "FocusFlow backend is running"})
 
 
 # ===================== LOCAL DEV ONLY =====================
+
 if __name__ == "__main__":
     app.run()
