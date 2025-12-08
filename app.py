@@ -2,6 +2,7 @@ import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
@@ -96,13 +97,17 @@ def signup():
         if not username or not email or not password:
             return jsonify({"success": False, "message": "All fields are required"})
 
+        # Check if user exists
         cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
         if cursor.fetchone():
             return jsonify({"success": False, "message": "User already exists"})
 
+        # Hash password before saving
+        hashed_password = generate_password_hash(password)
+
         cursor.execute(
             "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
-            (username, email, password)
+            (username, email, hashed_password)
         )
         db.commit()
 
@@ -133,7 +138,8 @@ def login():
 
         user_id, username, stored_password = row
 
-        if stored_password != password:
+        # Use hashed password comparison
+        if not check_password_hash(stored_password, password):
             return jsonify({"success": False, "message": "Incorrect password"})
 
         return jsonify({
@@ -294,3 +300,4 @@ def root():
 
 if __name__ == "__main__":
     app.run()
+
