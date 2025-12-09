@@ -7,16 +7,17 @@ import jwt
 import datetime
 from functools import wraps
 
-# =========================================
-# APP & CONFIG
-# =========================================
 app = Flask(__name__)
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev_secret_key_change_in_prod")
+# ================================================
+# SECRET KEY
+# ================================================
+SECRET_KEY = os.environ.get("SECRET_KEY", "dev_secret_key_change_this")
 
-# =========================================
-# CORS (supports Vercel + local dev + Android APK)
-# =========================================
+
+# ================================================
+# CORS (Vercel + Local + Mobile)
+# ================================================
 CORS(app, resources={
     r"/*": {
         "origins": [
@@ -25,7 +26,6 @@ CORS(app, resources={
             "http://localhost:3000",
             "http://localhost:5173",
             "http://localhost:8080",
-            "capacitor://localhost",
             "*"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -34,21 +34,22 @@ CORS(app, resources={
     }
 })
 
+
 @app.before_request
-def handle_options():
+def handle_preflight():
     if request.method == "OPTIONS":
         return jsonify({"ok": True}), 200
 
 
-# =========================================
-# DATABASE CONNECTION (Render format)
-# =========================================
+# ================================================
+# DATABASE CONNECTION (Railway MySQL)
+# ================================================
 try:
-    DB_HOST = os.environ.get("DATABASE_HOST", "localhost")
-    DB_USER = os.environ.get("DATABASE_USER", "root")
-    DB_PASS = os.environ.get("DATABASE_PASSWORD", "")
-    DB_NAME = os.environ.get("DATABASE_NAME", "focusflow")
-    DB_PORT = int(os.environ.get("DATABASE_PORT", 3306))
+    DB_HOST = os.environ.get("MYSQL_HOST")
+    DB_USER = os.environ.get("MYSQL_USER")
+    DB_PASS = os.environ.get("MYSQL_PASSWORD")
+    DB_NAME = os.environ.get("MYSQL_DB")
+    DB_PORT = int(os.environ.get("MYSQL_PORT"))
 
     db = mysql.connector.connect(
         host=DB_HOST,
@@ -59,46 +60,48 @@ try:
     )
 
     cursor = db.cursor()
-    print("✅ Connected to MySQL")
+    print("✅ Connected to Railway MySQL")
 
-except mysql.connector.Error as err:
+except Exception as e:
     cursor = None
-    print("❌ DB Connection Error:", err)
+    print("❌ DB Connection Failed:", e)
 
 
-# =========================================
-# TABLE CREATION IF NOT EXISTS
-# =========================================
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(100) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL
-)
-""")
-db.commit()
+# ================================================
+# CREATE TABLES (SAFE)
+# ================================================
+if cursor is not None:
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(100),
+        email VARCHAR(100) UNIQUE,
+        password VARCHAR(255)
+    )
+    """)
+    db.commit()
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS tasks (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    date DATE NOT NULL,
-    time VARCHAR(20) NOT NULL,
-    task VARCHAR(255) NOT NULL,
-    icon VARCHAR(50) NOT NULL,
-    color VARCHAR(50) NOT NULL,
-    duration VARCHAR(50) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-)
-""")
-db.commit()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS tasks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT,
+        date DATE,
+        time VARCHAR(20),
+        task VARCHAR(255),
+        icon VARCHAR(50),
+        color VARCHAR(50),
+        duration VARCHAR(50),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+    """)
+    db.commit()
+else:
+    print("⚠️ Skipping table creation because DB is not connected.")
 
 
-# =========================================
-# JWT AUTH DECORATOR
-# =========================================
+# ================================================
+# JWT DECORATOR
+# ================================================
 def require_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -111,18 +114,19 @@ def require_auth(f):
             token = token.replace("Bearer ", "")
             decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
             request.user_id = decoded["user_id"]
+
         except jwt.ExpiredSignatureError:
             return jsonify({"success": False, "message": "Token expired"}), 401
-        except Exception:
+        except:
             return jsonify({"success": False, "message": "Invalid token"}), 401
 
         return f(*args, **kwargs)
     return wrapper
 
 
-# =========================================
+# ================================================
 # SIGNUP
-# =========================================
+# ================================================
 @app.post("/api/signup")
 def signup():
     try:
@@ -153,9 +157,9 @@ def signup():
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
-# LOGIN → returns JWT token
-# =========================================
+# ================================================
+# LOGIN → Return JWT Token
+# ================================================
 @app.post("/api/login")
 def login():
     try:
@@ -174,6 +178,7 @@ def login():
         if not check_password_hash(hashed_pw, password):
             return jsonify({"success": False, "message": "Incorrect password"})
 
+        # Generate JWT token
         token = jwt.encode(
             {
                 "user_id": user_id,
@@ -196,9 +201,9 @@ def login():
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
+# ================================================
 # PROFILE (Protected)
-# =========================================
+# ================================================
 @app.post("/api/profile")
 @require_auth
 def profile():
@@ -223,9 +228,9 @@ def profile():
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
+# ================================================
 # ADD TASK (Protected)
-# =========================================
+# ================================================
 @app.post("/api/add_task")
 @require_auth
 def add_task():
@@ -249,9 +254,9 @@ def add_task():
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
+# ================================================
 # GET TASKS (Protected)
-# =========================================
+# ================================================
 @app.get("/api/get_tasks")
 @require_auth
 def get_tasks():
@@ -284,9 +289,9 @@ def get_tasks():
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
+# ================================================
 # UPDATE TASK (Protected)
-# =========================================
+# ================================================
 @app.put("/api/update_task/<int:task_id>")
 @require_auth
 def update_task(task_id):
@@ -311,9 +316,9 @@ def update_task(task_id):
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
+# ================================================
 # DELETE TASK (Protected)
-# =========================================
+# ================================================
 @app.delete("/api/delete_task/<int:task_id>")
 @require_auth
 def delete_task(task_id):
@@ -322,7 +327,6 @@ def delete_task(task_id):
             "DELETE FROM tasks WHERE id=%s AND user_id=%s",
             (task_id, request.user_id)
         )
-
         db.commit()
         return jsonify({"success": True})
 
@@ -331,16 +335,16 @@ def delete_task(task_id):
         return jsonify({"success": False, "message": "Server error"})
 
 
-# =========================================
+# ================================================
 # ROOT
-# =========================================
+# ================================================
 @app.get("/")
-def root():
-    return jsonify({"ok": True, "message": "FocusFlow backend running"})
+def home():
+    return jsonify({"ok": True, "message": "JWT Backend Running"})
 
 
-# =========================================
-# RENDER START
-# =========================================
+# ================================================
+# START SERVER (REQUIRED FOR RENDER)
+# ================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
