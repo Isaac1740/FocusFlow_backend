@@ -1,5 +1,7 @@
 flask
 flask-cors
 mysql-connector-python
+python-dotenv
+pyjwt
+werkzeug
 gunicorn
-
