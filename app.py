@@ -176,7 +176,7 @@ def login():
 # ================================================
 # PROFILE (DECRYPT ON READ)
 # ================================================
-@app.post("/api/profile")
+@app.get("/api/profile")
 @require_auth
 def profile():
     cursor.execute("SELECT username, email FROM users WHERE id=%s", (request.user_id,))
@@ -243,3 +243,4 @@ def home():
 # ================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
