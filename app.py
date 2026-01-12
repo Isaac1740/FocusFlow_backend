@@ -26,7 +26,7 @@ if not SECRET_KEY or not FERNET_KEY:
 fernet = Fernet(FERNET_KEY)
 
 # ================================================
-# HELPERS (ENCRYPTION)
+# ENCRYPTION HELPERS
 # ================================================
 def encrypt(text: str) -> str:
     return fernet.encrypt(text.encode()).decode()
@@ -35,7 +35,7 @@ def decrypt(text: str) -> str:
     return fernet.decrypt(text.encode()).decode()
 
 # ================================================
-# CORS (CORRECT)
+# CORS
 # ================================================
 CORS(
     app,
@@ -60,7 +60,7 @@ def preflight():
         return jsonify({"ok": True}), 200
 
 # ================================================
-# DATABASE CONNECTION
+# DATABASE CONNECTION (GLOBAL, SAFE)
 # ================================================
 db = mysql.connector.connect(
     host=os.environ.get("MYSQL_HOST"),
@@ -68,13 +68,27 @@ db = mysql.connector.connect(
     password=os.environ.get("MYSQL_PASSWORD"),
     database=os.environ.get("MYSQL_DB"),
     port=int(os.environ.get("MYSQL_PORT")),
+    autocommit=False,
 )
-cursor = db.cursor(buffered=True)
+
 print("✅ Database connected")
+
+# ================================================
+# SAFE CURSOR (FIX FOR 2013 ERROR)
+# ================================================
+def get_cursor():
+    global db
+    try:
+        db.ping(reconnect=True, attempts=3, delay=2)
+    except:
+        db.reconnect(attempts=3, delay=2)
+    return db.cursor(buffered=True)
 
 # ================================================
 # TABLES
 # ================================================
+cursor = get_cursor()
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -107,6 +121,7 @@ def require_auth(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         token = request.headers.get("Authorization")
+
         if not token:
             return jsonify({"success": False, "message": "Missing token"}), 401
 
@@ -128,13 +143,15 @@ def require_auth(fn):
 @app.post("/api/signup")
 def signup():
     try:
+        cursor = get_cursor()
+
         data = request.get_json()
         username = data.get("username")
         email = data.get("email")
         password = data.get("password")
 
         if not username or not email or not password:
-            return jsonify({"success": False, "message": "All fields required"})
+            return jsonify({"success": False, "message": "All fields required"}), 400
 
         cursor.execute(
             "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
@@ -148,6 +165,7 @@ def signup():
 
         return jsonify({"success": True, "message": "Signup successful"})
     except Exception as e:
+        db.rollback()
         print("❌ Signup error:", e)
         return jsonify({"success": False, "message": "Server error"}), 500
 
@@ -157,6 +175,8 @@ def signup():
 @app.post("/api/login")
 def login():
     try:
+        cursor = get_cursor()
+
         data = request.get_json()
         email = data.get("email")
         password = data.get("password")
@@ -167,7 +187,7 @@ def login():
         for user_id, enc_username, enc_email, hashed_pw in users:
             if decrypt(enc_email) == email:
                 if not check_password_hash(hashed_pw, password):
-                    return jsonify({"success": False, "message": "Incorrect password"})
+                    return jsonify({"success": False, "message": "Incorrect password"}), 401
 
                 token = jwt.encode(
                     {
@@ -189,7 +209,7 @@ def login():
                     }
                 )
 
-        return jsonify({"success": False, "message": "User not found"})
+        return jsonify({"success": False, "message": "User not found"}), 404
     except Exception as e:
         print("❌ Login error:", e)
         return jsonify({"success": False, "message": "Server error"}), 500
@@ -201,6 +221,8 @@ def login():
 @require_auth
 def profile():
     try:
+        cursor = get_cursor()
+
         cursor.execute(
             "SELECT username, email FROM users WHERE id=%s",
             (request.user_id,),
@@ -208,7 +230,7 @@ def profile():
         row = cursor.fetchone()
 
         if not row:
-            return jsonify({"success": False, "message": "User not found"})
+            return jsonify({"success": False, "message": "User not found"}), 404
 
         return jsonify(
             {
@@ -230,7 +252,9 @@ def profile():
 @app.post("/api/add_task")
 @require_auth
 def add_task():
+    cursor = get_cursor()
     data = request.get_json()
+
     cursor.execute(
         """
         INSERT INTO tasks (user_id, date, time, task, icon, color, duration)
@@ -252,6 +276,7 @@ def add_task():
 @app.get("/api/get_tasks")
 @require_auth
 def get_tasks():
+    cursor = get_cursor()
     date = request.args.get("date")
 
     cursor.execute(
@@ -292,4 +317,3 @@ def home():
 # ================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
