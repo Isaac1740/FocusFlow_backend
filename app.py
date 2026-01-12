@@ -69,7 +69,7 @@ db = mysql.connector.connect(
     database=os.environ.get("MYSQL_DB"),
     port=int(os.environ.get("MYSQL_PORT")),
 )
-cursor = db.cursor()
+cursor = db.cursor(buffered=True)
 print("✅ Database connected")
 
 # ================================================
@@ -292,3 +292,4 @@ def home():
 # ================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
