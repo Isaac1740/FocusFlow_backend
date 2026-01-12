@@ -45,11 +45,9 @@ CORS(
                 "https://focus-flow-jet.vercel.app",
                 "http://localhost:3000",
                 "http://localhost:5173",
-                "http://localhost:8080",
             ],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"],
-            "supports_credentials": True,
         }
     },
 )
@@ -60,7 +58,7 @@ def preflight():
         return jsonify({"ok": True}), 200
 
 # ================================================
-# DATABASE CONNECTION (GLOBAL, SAFE)
+# DATABASE CONNECTION
 # ================================================
 db = mysql.connector.connect(
     host=os.environ.get("MYSQL_HOST"),
@@ -73,15 +71,8 @@ db = mysql.connector.connect(
 
 print("✅ Database connected")
 
-# ================================================
-# SAFE CURSOR (FIX FOR 2013 ERROR)
-# ================================================
 def get_cursor():
-    global db
-    try:
-        db.ping(reconnect=True, attempts=3, delay=2)
-    except:
-        db.reconnect(attempts=3, delay=2)
+    db.ping(reconnect=True, attempts=3, delay=2)
     return db.cursor(buffered=True)
 
 # ================================================
@@ -138,81 +129,42 @@ def require_auth(fn):
     return wrapper
 
 # ================================================
-# SIGNUP
+# AUTH
 # ================================================
 @app.post("/api/signup")
 def signup():
-    try:
-        cursor = get_cursor()
+    cursor = get_cursor()
+    data = request.get_json()
 
-        data = request.get_json()
-        username = data.get("username")
-        email = data.get("email")
-        password = data.get("password")
+    cursor.execute(
+        "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
+        (encrypt(data["username"]), encrypt(data["email"]),
+         generate_password_hash(data["password"]))
+    )
+    db.commit()
+    return jsonify({"success": True})
 
-        if not username or not email or not password:
-            return jsonify({"success": False, "message": "All fields required"}), 400
-
-        cursor.execute(
-            "INSERT INTO users (username, email, password) VALUES (%s, %s, %s)",
-            (
-                encrypt(username),
-                encrypt(email),
-                generate_password_hash(password),
-            ),
-        )
-        db.commit()
-
-        return jsonify({"success": True, "message": "Signup successful"})
-    except Exception as e:
-        db.rollback()
-        print("❌ Signup error:", e)
-        return jsonify({"success": False, "message": "Server error"}), 500
-
-# ================================================
-# LOGIN
-# ================================================
 @app.post("/api/login")
 def login():
-    try:
-        cursor = get_cursor()
+    cursor = get_cursor()
+    data = request.get_json()
 
-        data = request.get_json()
-        email = data.get("email")
-        password = data.get("password")
+    cursor.execute("SELECT id, username, email, password FROM users")
+    users = cursor.fetchall()
 
-        cursor.execute("SELECT id, username, email, password FROM users")
-        users = cursor.fetchall()
+    for user_id, u, e, p in users:
+        if decrypt(e) == data["email"] and check_password_hash(p, data["password"]):
+            token = jwt.encode(
+                {
+                    "user_id": user_id,
+                    "exp": datetime.datetime.utcnow() + datetime.timedelta(days=7),
+                },
+                SECRET_KEY,
+                algorithm="HS256",
+            )
+            return jsonify({"success": True, "token": token})
 
-        for user_id, enc_username, enc_email, hashed_pw in users:
-            if decrypt(enc_email) == email:
-                if not check_password_hash(hashed_pw, password):
-                    return jsonify({"success": False, "message": "Incorrect password"}), 401
-
-                token = jwt.encode(
-                    {
-                        "user_id": user_id,
-                        "exp": datetime.datetime.utcnow()
-                        + datetime.timedelta(days=7),
-                    },
-                    SECRET_KEY,
-                    algorithm="HS256",
-                )
-
-                return jsonify(
-                    {
-                        "success": True,
-                        "token": token,
-                        "user_id": user_id,
-                        "username": decrypt(enc_username),
-                        "email": email,
-                    }
-                )
-
-        return jsonify({"success": False, "message": "User not found"}), 404
-    except Exception as e:
-        print("❌ Login error:", e)
-        return jsonify({"success": False, "message": "Server error"}), 500
+    return jsonify({"success": False}), 401
 
 # ================================================
 # PROFILE
@@ -220,31 +172,17 @@ def login():
 @app.get("/api/profile")
 @require_auth
 def profile():
-    try:
-        cursor = get_cursor()
-
-        cursor.execute(
-            "SELECT username, email FROM users WHERE id=%s",
-            (request.user_id,),
-        )
-        row = cursor.fetchone()
-
-        if not row:
-            return jsonify({"success": False, "message": "User not found"}), 404
-
-        return jsonify(
-            {
-                "success": True,
-                "user": {
-                    "id": request.user_id,
-                    "username": decrypt(row[0]),
-                    "email": decrypt(row[1]),
-                },
-            }
-        )
-    except Exception as e:
-        print("❌ Profile error:", e)
-        return jsonify({"success": False, "message": "Server error"}), 500
+    cursor = get_cursor()
+    cursor.execute("SELECT username, email FROM users WHERE id=%s", (request.user_id,))
+    u, e = cursor.fetchone()
+    return jsonify({
+        "success": True,
+        "user": {
+            "id": request.user_id,
+            "username": decrypt(u),
+            "email": decrypt(e),
+        }
+    })
 
 # ================================================
 # TASKS
@@ -258,7 +196,7 @@ def add_task():
     cursor.execute(
         """
         INSERT INTO tasks (user_id, date, time, task, icon, color, duration)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
         """,
         (
             request.user_id,
@@ -280,30 +218,61 @@ def get_tasks():
     date = request.args.get("date")
 
     cursor.execute(
-        """
-        SELECT id, date, time, task, icon, color, duration
-        FROM tasks
-        WHERE user_id=%s AND date=%s
-        ORDER BY time ASC
-        """,
+        "SELECT id, date, time, task, icon, color, duration FROM tasks WHERE user_id=%s AND date=%s ORDER BY time",
         (request.user_id, date),
     )
 
     rows = cursor.fetchall()
-    tasks = [
-        {
-            "id": r[0],
-            "date": r[1].strftime("%Y-%m-%d"),
-            "time": r[2],
-            "task": r[3],
-            "icon": r[4],
-            "color": r[5],
-            "duration": r[6],
-        }
-        for r in rows
-    ]
+    tasks = [{
+        "id": r[0],
+        "date": r[1].strftime("%Y-%m-%d"),
+        "time": r[2],
+        "task": r[3],
+        "icon": r[4],
+        "color": r[5],
+        "duration": r[6],
+    } for r in rows]
 
     return jsonify({"success": True, "tasks": tasks})
+
+# ✅ DELETE TASK
+@app.delete("/api/delete_task/<int:task_id>")
+@require_auth
+def delete_task(task_id):
+    cursor = get_cursor()
+    cursor.execute(
+        "DELETE FROM tasks WHERE id=%s AND user_id=%s",
+        (task_id, request.user_id),
+    )
+    db.commit()
+    return jsonify({"success": True})
+
+# ✅ UPDATE TASK
+@app.put("/api/update_task/<int:task_id>")
+@require_auth
+def update_task(task_id):
+    cursor = get_cursor()
+    data = request.get_json()
+
+    cursor.execute(
+        """
+        UPDATE tasks
+        SET date=%s, time=%s, task=%s, icon=%s, color=%s, duration=%s
+        WHERE id=%s AND user_id=%s
+        """,
+        (
+            data["date"],
+            data["time"],
+            data["task"],
+            data["icon"],
+            data["color"],
+            data["duration"],
+            task_id,
+            request.user_id,
+        ),
+    )
+    db.commit()
+    return jsonify({"success": True})
 
 # ================================================
 # ROOT
